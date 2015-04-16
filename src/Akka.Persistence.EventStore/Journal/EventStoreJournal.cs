@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using Akka.Actor;
 using Akka.Persistence.Journal;
 using EventStore.ClientAPI;
-using EventStore.ClientAPI.SystemData;
 using Newtonsoft.Json;
 
 namespace Akka.Persistence.EventStore.Journal
