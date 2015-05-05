@@ -2,13 +2,11 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
-using System.Runtime.Serialization.Formatters;
-using System.Text;
 using System.Threading.Tasks;
-using Akka.Actor;
+using Akka.Event;
 using Akka.Persistence.Journal;
+using Akka.Serialization;
 using EventStore.ClientAPI;
-using Newtonsoft.Json;
 
 namespace Akka.Persistence.EventStore.Journal
 {
@@ -16,29 +14,24 @@ namespace Akka.Persistence.EventStore.Journal
     {
         private const int BatchSize = 500;
         private readonly Lazy<Task<IEventStoreConnection>> _connection;
-        private readonly JsonSerializerSettings _serializerSettings;
+        private readonly Serializer _serializer;
+        private readonly ILoggingAdapter _log;
 
         public EventStoreJournal()
         {
-            _serializerSettings = new JsonSerializerSettings
-            {
-                TypeNameHandling = TypeNameHandling.Objects,
-                TypeNameAssemblyFormat = FormatterAssemblyStyle.Simple,
-                Formatting = Formatting.Indented,
-                Converters =
-                {
-                    new ActorRefConverter(Context)
-                }
-            };
+            _log = Context.GetLogger();
+
+            var serialization = Context.System.Serialization;
+            _serializer = serialization.FindSerializerForType(typeof(IPersistentRepresentation));
 
             var extension = EventStorePersistence.Instance.Apply(Context.System);
-            var storeSettings = extension.JournalSettings;
+            var journalSettings = extension.JournalSettings;
 
             _connection = new Lazy<Task<IEventStoreConnection>>(async () =>
             {
-                ConnectionSettings settings = storeSettings.ConnectionSettingsFactory.Create();
+                ConnectionSettings settings = journalSettings.ConnectionSettingsFactory.Create();
 
-                var endPoint = new IPEndPoint(IPAddress.Parse(storeSettings.Host), storeSettings.TcpPort);
+                var endPoint = new IPEndPoint(IPAddress.Parse(journalSettings.Host), journalSettings.TcpPort);
 
                 IEventStoreConnection connection = EventStoreConnection.Create(settings, endPoint, "akka.net.journal");
                 await connection.ConnectAsync();
@@ -53,107 +46,83 @@ namespace Akka.Persistence.EventStore.Journal
 
         public override async Task<long> ReadHighestSequenceNrAsync(string persistenceId, long fromSequenceNr)
         {
-            var connection = await GetConnection();
+            try
+            {
+                var connection = await GetConnection();
 
-            var slice = await connection.ReadStreamEventsBackwardAsync(persistenceId, StreamPosition.End, 1, false);
+                var slice = await connection.ReadStreamEventsBackwardAsync(persistenceId, StreamPosition.End, 1, false);
 
-            long sequence = 0;
+                long sequence = 0;
 
-            if (slice.Events.Any())
-                sequence = slice.Events.First().OriginalEventNumber + 1;
+                if (slice.Events.Any())
+                    sequence = slice.Events.First().OriginalEventNumber + 1;
 
-            return sequence;
+                return sequence;
+            }
+            catch (Exception e)
+            {
+                _log.Error(e, e.Message);
+                throw;
+            }
         }
 
         public override async Task ReplayMessagesAsync(string persistenceId, long fromSequenceNr, long toSequenceNr, long max, Action<IPersistentRepresentation> replayCallback)
-        {
-            var connection = await GetConnection();
-
-            var sequenceNr = ((int)fromSequenceNr - 1);
-            if (sequenceNr < 0)
-                sequenceNr = 0;
-
-            StreamEventsSlice slice;
-            do
-            {
-                slice = await connection.ReadStreamEventsForwardAsync(persistenceId, sequenceNr, BatchSize, false);
-
-                foreach (var @event in slice.Events)
-                {
-                    var json = Encoding.UTF8.GetString(@event.OriginalEvent.Data);
-                    var representation = JsonConvert.DeserializeObject<IPersistentRepresentation>(json, _serializerSettings);
-                    replayCallback(representation);
-                }
-
-                sequenceNr = slice.NextEventNumber;
-
-            } while (!slice.IsEndOfStream);
-        }
-
-        protected override async Task WriteMessagesAsync(IEnumerable<IPersistentRepresentation> messages)
         {
             try
             {
                 var connection = await GetConnection();
 
-                var array = messages.ToArray();
+                var start = ((int)fromSequenceNr - 1);
 
-                foreach (var grouping in array.GroupBy(x => x.PersistenceId))
+                StreamEventsSlice slice;
+                do
                 {
-                    var persistenceId = grouping.Key;
+                    slice = await connection.ReadStreamEventsForwardAsync(persistenceId, start, BatchSize, false);
 
-                    var representations = grouping.OrderBy(x => x.SequenceNr).ToArray();
-                    var expectedVersion = (int)representations.Last().SequenceNr - 2;
-
-                    var events = representations.Select(x =>
+                    foreach (var @event in slice.Events)
                     {
-                        var eventId = GuidUtility.Create(GuidUtility.IsoOidNamespace, string.Concat(persistenceId, x.SequenceNr));
-                        var json = JsonConvert.SerializeObject(x, _serializerSettings);
-                        var data = Encoding.UTF8.GetBytes(json);
-                        var meta = new byte[0];
-                        return new EventData(eventId, x.GetType().FullName, true, data, meta);
-                    });
+                        var representation = (IPersistentRepresentation)_serializer.FromBinary(@event.OriginalEvent.Data, typeof(IPersistentRepresentation));
+                        replayCallback(representation);
+                    }
 
-                    await connection.AppendToStreamAsync(persistenceId, expectedVersion, events);
-                }
+                    start = slice.NextEventNumber;
+
+                } while (!slice.IsEndOfStream);
             }
             catch (Exception e)
             {
                 Console.WriteLine(e);
+                throw;
+            }
+        }
+
+        protected override async Task WriteMessagesAsync(IEnumerable<IPersistentRepresentation> messages)
+        {
+            var connection = await GetConnection();
+
+            foreach (var grouping in messages.GroupBy(x => x.PersistenceId))
+            {
+                var stream = grouping.Key;
+
+                var representations = grouping.OrderBy(x => x.SequenceNr).ToArray();
+                var expectedVersion = (int)representations.First().SequenceNr - 2;
+
+                var events = representations.Select(x =>
+                {
+                    var data = _serializer.ToBinary(x);
+                    var eventId = GuidUtility.Create(GuidUtility.IsoOidNamespace, string.Concat(stream, x.SequenceNr));
+
+                    var meta = new byte[0];
+                    return new EventData(eventId, x.GetType().FullName, true, data, meta);
+                });
+
+                await connection.AppendToStreamAsync(stream, expectedVersion < 0 ? ExpectedVersion.NoStream : expectedVersion, events);
             }
         }
 
         protected override Task DeleteMessagesToAsync(string persistenceId, long toSequenceNr, bool isPermanent)
         {
             return Task.FromResult<object>(null);
-        }
-
-        class ActorRefConverter : JsonConverter
-        {
-            private readonly IActorContext _context;
-
-            public ActorRefConverter(IActorContext context)
-            {
-                _context = context;
-            }
-
-            public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
-            {
-                writer.WriteValue(((IActorRef)value).Path.ToStringWithAddress());
-            }
-
-            public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
-            {
-                var value = reader.Value.ToString();
-
-                ActorSelection selection = _context.ActorSelection(value);
-                return selection.Anchor;
-            }
-
-            public override bool CanConvert(Type objectType)
-            {
-                return typeof(IActorRef).IsAssignableFrom(objectType);
-            }
         }
     }
 }
