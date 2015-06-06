@@ -113,7 +113,7 @@ namespace Akka.Persistence.EventStore.Journal
                     var eventId = GuidUtility.Create(GuidUtility.IsoOidNamespace, string.Concat(stream, x.SequenceNr));
 
                     var meta = new byte[0];
-                    return new EventData(eventId, x.GetType().FullName, true, data, meta);
+                    return new EventData(eventId, x.Payload.GetType().FullName, true, data, meta);
                 });
 
                 await connection.AppendToStreamAsync(stream, expectedVersion < 0 ? ExpectedVersion.NoStream : expectedVersion, events);
