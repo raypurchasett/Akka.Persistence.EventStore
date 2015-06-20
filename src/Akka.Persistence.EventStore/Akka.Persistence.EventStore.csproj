@@ -30,12 +30,12 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Akka, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Akka.1.0.0\lib\net45\Akka.dll</HintPath>
+    <Reference Include="Akka, Version=1.0.3.11, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\Akka.1.0.3\lib\net45\Akka.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="Akka.Persistence, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Akka.Persistence.1.0.0-pre1504092226\lib\net45\Akka.Persistence.dll</HintPath>
+    <Reference Include="Akka.Persistence, Version=1.0.3.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\..\packages\Akka.Persistence.1.0.3.0-beta\lib\net45\Akka.Persistence.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="EventStore.ClientAPI, Version=3.0.2.0, Culture=neutral, processorArchitecture=MSIL">
@@ -64,24 +64,18 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Extension.cs" />
-    <Compile Include="IConnectionSettingsFactory.cs" />
+    <Compile Include="IConnectionFactory.cs" />
     <Compile Include="Journal\EventStoreJournal.cs" />
     <Compile Include="Journal\GuidUtility.cs" />
+    <Compile Include="Journal\IDeserializer.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Snapshot\EventStoreSnapshotStore.cs" />
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>
     <EmbeddedResource Include="eventstore.conf" />
+    <None Include="app.config" />
     <None Include="packages.config" />
-    <None Include="protos\google\protobuf\csharp_options.proto" />
-    <None Include="protos\google\protobuf\descriptor.proto" />
-    <None Include="protos\tutorial\addressbook.proto" />
-  </ItemGroup>
-  <ItemGroup>
-    <Content Include="CHANGES.txt" />
-    <Content Include="licenses\license.txt" />
-    <Content Include="licenses\protoc-license.txt" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

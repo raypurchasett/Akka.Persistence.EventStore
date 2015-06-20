@@ -1,9 +1,36 @@
 ﻿using System;
+using System.Threading.Tasks;
 using Akka.Actor;
 using Akka.Configuration;
+using Akka.Persistence.EventStore.Journal;
+using EventStore.ClientAPI;
 
 namespace Akka.Persistence.EventStore
 {
+    public class ServerSettings
+    {
+        public const string ConfigPath = "akka.persistence.eventstore-server";
+
+        private readonly Task<IEventStoreConnection> _init;
+
+        public ServerSettings(Config config)
+        {
+            if (config == null) throw new ArgumentNullException("config", "EventStore journal settings cannot be initialized, because required HOCON section couldn't been found");
+
+            var host = config.GetString("host");
+            var tcpPort = config.GetInt("tcp-port");
+
+            var settingsFactoryType = Type.GetType(config.GetString("connection-factory"));
+            var factory = settingsFactoryType != null
+                ? (IConnectionFactory)Activator.CreateInstance(settingsFactoryType)
+                : new DefaultConnectionFactory();
+
+            _init = factory.CreateAsync(host, tcpPort);
+        }
+
+        public IEventStoreConnection Connection { get { return _init.Result; } }
+    }
+
     /// <summary>
     /// Configuration settings representation targeting Sql Server journal actor.
     /// </summary>
@@ -11,70 +38,20 @@ namespace Akka.Persistence.EventStore
     {
         public const string ConfigPath = "akka.persistence.journal.eventstore";
 
-        /// <summary>
-        /// Connection string used to access a persistent EventStore instance.
-        /// </summary>
-        public string Host { get; private set; }
 
-        /// <summary>
-        /// Connection timeout for EventStore related operations.
-        /// </summary>
-        public int TcpPort { get; private set; }
-
-        /// <summary>
-        /// Connection settings for EventStore connections.
-        /// </summary>
-        public IConnectionSettingsFactory ConnectionSettingsFactory { get; private set; }
+        public IDeserializer Deserializer { get; private set; }
 
         public JournalSettings(Config config)
         {
             if (config == null) throw new ArgumentNullException("config", "EventStore journal settings cannot be initialized, because required HOCON section couldn't been found");
 
-            Host = config.GetString("server-host");
-            TcpPort = config.GetInt("server-tcp-port");
-
-            var settingsFactoryType = Type.GetType(config.GetString("connection-settings-factory"));
-            ConnectionSettingsFactory = settingsFactoryType != null
-                ? (IConnectionSettingsFactory) Activator.CreateInstance(settingsFactoryType)
-                : new DefaultConnectionSettingsFactory();
+            var deserializerType = Type.GetType(config.GetString("deserializer"));
+            Deserializer = deserializerType != null
+                ? (IDeserializer)Activator.CreateInstance(deserializerType)
+                : new DefaultDeserializer();
         }
     }
 
-    /// <summary>
-    /// Configuration settings representation targeting Sql Server snapshot store actor.
-    /// </summary>
-    public class SnapshotStoreSettings
-    {
-        public const string ConfigPath = "akka.persistence.snapshot-store.eventstore";
-
-        /// <summary>
-        /// Connection string used to access a persistent EventStore instance.
-        /// </summary>
-        public string Host { get; private set; }
-
-        /// <summary>
-        /// Connection timeout for EventStore related operations.
-        /// </summary>
-        public int TcpPort { get; private set; }
-
-        /// <summary>
-        /// Connection settings for EventStore connections.
-        /// </summary>
-        public IConnectionSettingsFactory ConnectionSettingsFactory { get; private set; }
-
-        public SnapshotStoreSettings(Config config)
-        {
-            if (config == null) throw new ArgumentNullException("config", "EventStore journal settings cannot be initialized, because required HOCON section couldn't been found");
-
-            Host = config.GetString("server-host");
-            TcpPort = config.GetInt("server-tcp-port");
-
-            var settingsFactoryType = Type.GetType(config.GetString("connection-settings-factory"));
-            ConnectionSettingsFactory = settingsFactoryType != null
-                ? (IConnectionSettingsFactory)Activator.CreateInstance(settingsFactoryType)
-                : new DefaultConnectionSettingsFactory();
-        }
-    }
 
     /// <summary>
     /// An actor system extension initializing support for EventStore persistence layer.
@@ -89,14 +66,14 @@ namespace Akka.Persistence.EventStore
         /// <summary>
         /// Snapshot store related settings loaded from HOCON configuration.
         /// </summary>
-        public readonly SnapshotStoreSettings SnapshotStoreSettings;
+        public readonly ServerSettings ServerSettings;
 
         public EventStorePersistenceExtension(ExtendedActorSystem system)
         {
             system.Settings.InjectTopLevelFallback(EventStorePersistence.DefaultConfiguration());
 
             JournalSettings = new JournalSettings(system.Settings.Config.GetConfig(JournalSettings.ConfigPath));
-            SnapshotStoreSettings = new SnapshotStoreSettings(system.Settings.Config.GetConfig(SnapshotStoreSettings.ConfigPath));
+            ServerSettings = new ServerSettings(system.Settings.Config.GetConfig(ServerSettings.ConfigPath));
         }
     }
 

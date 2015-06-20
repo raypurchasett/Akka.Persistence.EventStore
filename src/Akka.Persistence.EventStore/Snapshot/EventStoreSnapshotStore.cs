@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Linq;
-using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using Akka.Event;
@@ -13,7 +12,7 @@ namespace Akka.Persistence.EventStore.Snapshot
 {
     public class EventStoreSnapshotStore : SnapshotStore
     {
-        private readonly Lazy<Task<IEventStoreConnection>> _connection;
+        private readonly IEventStoreConnection _connection;
 
         private readonly Serializer _serializer;
         private readonly ILoggingAdapter _log;
@@ -26,35 +25,17 @@ namespace Akka.Persistence.EventStore.Snapshot
             _serializer = serialization.FindSerializerForType(typeof(SelectedSnapshot));
 
             var extension = EventStorePersistence.Instance.Apply(Context.System);
-            var storeSettings = extension.SnapshotStoreSettings;
-
-            _connection = new Lazy<Task<IEventStoreConnection>>(async () =>
-            {
-                ConnectionSettings settings = storeSettings.ConnectionSettingsFactory.Create();
-
-                var endPoint = new IPEndPoint(IPAddress.Parse(storeSettings.Host), storeSettings.TcpPort);
-
-                IEventStoreConnection connection = EventStoreConnection.Create(settings, endPoint, "akka.net.snapshot-store");
-                await connection.ConnectAsync();
-
-                return connection;
-            });
-        }
-
-        private Task<IEventStoreConnection> GetConnection()
-        {
-            return _connection.Value;
+            _connection = extension.ServerSettings.Connection;
         }
 
         protected override async Task<SelectedSnapshot> LoadAsync(string persistenceId, SnapshotSelectionCriteria criteria)
         {
-            var connection = await GetConnection();
             var streamName = GetStreamName(persistenceId);
-            var slice = await connection.ReadStreamEventsBackwardAsync(streamName, StreamPosition.End, 1, false);
+            var slice = await _connection.ReadStreamEventsBackwardAsync(streamName, StreamPosition.End, 1, false);
 
             if (slice.Status == SliceReadStatus.StreamNotFound)
             {
-                await connection.SetStreamMetadataAsync(streamName, ExpectedVersion.Any, StreamMetadata.Data);
+                await _connection.SetStreamMetadataAsync(streamName, ExpectedVersion.Any, StreamMetadata.Data);
                 return null;
             }
 
@@ -70,12 +51,11 @@ namespace Akka.Persistence.EventStore.Snapshot
 
         protected override async Task SaveAsync(SnapshotMetadata metadata, object snapshot)
         {
-            var connection = await GetConnection();
             var streamName = GetStreamName(metadata.PersistenceId);
             var data = _serializer.ToBinary(new SelectedSnapshot(metadata, snapshot));
             var eventData = new EventData(Guid.NewGuid(), typeof(Serialization.Snapshot).Name, false, data, new byte[0]);
 
-            await connection.AppendToStreamAsync(streamName, ExpectedVersion.Any, eventData);
+            await _connection.AppendToStreamAsync(streamName, ExpectedVersion.Any, eventData);
         }
 
         protected override void Saved(SnapshotMetadata metadata)

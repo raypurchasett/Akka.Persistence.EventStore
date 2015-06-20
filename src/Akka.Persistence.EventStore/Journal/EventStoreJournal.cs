@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
 using System.Threading.Tasks;
 using Akka.Event;
 using Akka.Persistence.Journal;
@@ -13,9 +12,10 @@ namespace Akka.Persistence.EventStore.Journal
     public class EventStoreJournal : AsyncWriteJournal
     {
         private const int BatchSize = 500;
-        private readonly Lazy<Task<IEventStoreConnection>> _connection;
+        private readonly IEventStoreConnection _connection;
         private readonly Serializer _serializer;
         private readonly ILoggingAdapter _log;
+        private readonly IDeserializer _deserializer;
 
         public EventStoreJournal()
         {
@@ -26,31 +26,16 @@ namespace Akka.Persistence.EventStore.Journal
 
             var extension = EventStorePersistence.Instance.Apply(Context.System);
             var journalSettings = extension.JournalSettings;
+            _deserializer = journalSettings.Deserializer;
 
-            _connection = new Lazy<Task<IEventStoreConnection>>(async () =>
-            {
-                ConnectionSettings settings = journalSettings.ConnectionSettingsFactory.Create();
-
-                var endPoint = new IPEndPoint(IPAddress.Parse(journalSettings.Host), journalSettings.TcpPort);
-
-                IEventStoreConnection connection = EventStoreConnection.Create(settings, endPoint, "akka.net.journal");
-                await connection.ConnectAsync();
-                return connection;
-            });
-        }
-
-        private Task<IEventStoreConnection> GetConnection()
-        {
-            return _connection.Value;
+            _connection = extension.ServerSettings.Connection;
         }
 
         public override async Task<long> ReadHighestSequenceNrAsync(string persistenceId, long fromSequenceNr)
         {
             try
             {
-                var connection = await GetConnection();
-
-                var slice = await connection.ReadStreamEventsBackwardAsync(persistenceId, StreamPosition.End, 1, false);
+                var slice = await _connection.ReadStreamEventsBackwardAsync(persistenceId, StreamPosition.End, 1, false);
 
                 long sequence = 0;
 
@@ -70,24 +55,24 @@ namespace Akka.Persistence.EventStore.Journal
         {
             try
             {
-                var connection = await GetConnection();
-
                 var start = ((int)fromSequenceNr - 1);
 
                 StreamEventsSlice slice;
                 do
                 {
-                    slice = await connection.ReadStreamEventsForwardAsync(persistenceId, start, BatchSize, false);
+                    slice = await _connection.ReadStreamEventsForwardAsync(persistenceId, start, BatchSize, false);
 
                     foreach (var @event in slice.Events)
                     {
-                        var representation = (IPersistentRepresentation)_serializer.FromBinary(@event.OriginalEvent.Data, typeof(IPersistentRepresentation));
+                        var representation = _deserializer.GetRepresentation(_serializer, @event.OriginalEvent);
                         replayCallback(representation);
                     }
 
                     start = slice.NextEventNumber;
 
                 } while (!slice.IsEndOfStream);
+
+                _log.Debug("Successfully read stream: {0}", persistenceId);
             }
             catch (Exception e)
             {
@@ -98,8 +83,6 @@ namespace Akka.Persistence.EventStore.Journal
 
         protected override async Task WriteMessagesAsync(IEnumerable<IPersistentRepresentation> messages)
         {
-            var connection = await GetConnection();
-
             foreach (var grouping in messages.GroupBy(x => x.PersistenceId))
             {
                 var stream = grouping.Key;
@@ -116,7 +99,7 @@ namespace Akka.Persistence.EventStore.Journal
                     return new EventData(eventId, x.Payload.GetType().FullName, true, data, meta);
                 });
 
-                await connection.AppendToStreamAsync(stream, expectedVersion < 0 ? ExpectedVersion.NoStream : expectedVersion, events);
+                await _connection.AppendToStreamAsync(stream, expectedVersion < 0 ? ExpectedVersion.NoStream : expectedVersion, events);
             }
         }
 

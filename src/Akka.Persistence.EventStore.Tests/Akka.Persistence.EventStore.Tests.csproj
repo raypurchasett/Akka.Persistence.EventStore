@@ -94,15 +94,15 @@
     <None Include="protos\tutorial\addressbook.proto" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="CHANGES.txt" />
-    <Content Include="licenses\license.txt" />
-    <Content Include="licenses\protoc-license.txt" />
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="..\Akka.Persistence.EventStore\Akka.Persistence.EventStore.csproj">
       <Project>{071dc6c0-171c-4b8d-8114-223f504ff49c}</Project>
       <Name>Akka.Persistence.EventStore</Name>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="CHANGES.txt" />
+    <Content Include="licenses\license.txt" />
+    <Content Include="licenses\protoc-license.txt" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="..\..\packages\EventStore.Client.Embedded.3.0.2\build\EventStore.Client.Embedded.targets" Condition="Exists('..\..\packages\EventStore.Client.Embedded.3.0.2\build\EventStore.Client.Embedded.targets')" />
