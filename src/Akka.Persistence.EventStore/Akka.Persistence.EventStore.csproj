@@ -76,7 +76,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Class1.cs" />
+    <Compile Include="EventStoreSubscriptionView.cs" />
     <Compile Include="Extension.cs" />
     <Compile Include="IConnectionFactory.cs" />
     <Compile Include="Journal\EventStoreJournal.cs" />
