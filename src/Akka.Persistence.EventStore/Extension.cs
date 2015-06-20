@@ -2,6 +2,7 @@
 using System.Threading.Tasks;
 using Akka.Actor;
 using Akka.Configuration;
+using Akka.Event;
 using Akka.Persistence.EventStore.Journal;
 using EventStore.ClientAPI;
 
@@ -13,7 +14,7 @@ namespace Akka.Persistence.EventStore
 
         private readonly Task<IEventStoreConnection> _init;
 
-        public ServerSettings(Config config)
+        public ServerSettings(ILoggingAdapter log, Config config)
         {
             if (config == null) throw new ArgumentNullException("config", "EventStore journal settings cannot be initialized, because required HOCON section couldn't been found");
 
@@ -25,7 +26,7 @@ namespace Akka.Persistence.EventStore
                 ? (IConnectionFactory)Activator.CreateInstance(settingsFactoryType)
                 : new DefaultConnectionFactory();
 
-            _init = factory.CreateAsync(host, tcpPort);
+            _init = factory.CreateAsync(log, host, tcpPort);
         }
 
         public IEventStoreConnection Connection { get { return _init.Result; } }
@@ -73,7 +74,7 @@ namespace Akka.Persistence.EventStore
             system.Settings.InjectTopLevelFallback(EventStorePersistence.DefaultConfiguration());
 
             JournalSettings = new JournalSettings(system.Settings.Config.GetConfig(JournalSettings.ConfigPath));
-            ServerSettings = new ServerSettings(system.Settings.Config.GetConfig(ServerSettings.ConfigPath));
+            ServerSettings = new ServerSettings(system.Log, system.Settings.Config.GetConfig(ServerSettings.ConfigPath));
         }
     }
 
